@@ -24,9 +24,10 @@ type JiraConfig struct {
 }
 
 type GitHubConfig struct {
-	Token string `json:"token"`
-	Owner string `json:"owner"`
-	Repo  string `json:"repo"`
+	Token    string `json:"token"`
+	Owner    string `json:"owner"`
+	Repo     string `json:"repo"`
+	UseGHCLI bool   `json:"useGhCli"`
 }
 
 type RepoConfig struct {
@@ -178,13 +179,32 @@ func RunConfigure() error {
 	fmt.Println()
 	fmt.Println("── GitHub Configuration ──")
 	fmt.Println()
-	fmt.Println("Create a token with 'repo' scope at:")
-	fmt.Println("https://github.com/settings/tokens")
-	fmt.Println()
+
+	// Check if gh CLI is available
+	ghAvailable := CheckGHCLI()
+	if ghAvailable {
+		fmt.Println("✓ GitHub CLI (gh) detected and authenticated")
+		fmt.Println()
+	} else {
+		fmt.Println("GitHub CLI (gh) not found or not authenticated.")
+		fmt.Println("Create a token with 'repo' scope at:")
+		fmt.Println("https://github.com/settings/tokens")
+		fmt.Println()
+	}
 
 	existing.GitHub.Owner = prompt(reader, "GitHub Owner (org or username)", existing.GitHub.Owner)
 	existing.GitHub.Repo = prompt(reader, "GitHub Repository name", existing.GitHub.Repo)
-	existing.GitHub.Token = promptSecret(reader, "GitHub Personal Access Token", existing.GitHub.Token)
+
+	if ghAvailable {
+		useGH := prompt(reader, "Use GitHub CLI for PR creation? [Y/n]", "y")
+		existing.GitHub.UseGHCLI = strings.ToLower(useGH) != "n"
+		if !existing.GitHub.UseGHCLI {
+			existing.GitHub.Token = promptSecret(reader, "GitHub Personal Access Token", existing.GitHub.Token)
+		}
+	} else {
+		existing.GitHub.UseGHCLI = false
+		existing.GitHub.Token = promptSecret(reader, "GitHub Personal Access Token", existing.GitHub.Token)
+	}
 
 	// Repository Configuration
 	fmt.Println()
