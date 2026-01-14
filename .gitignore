@@ -1,0 +1,8 @@
+# Binary
+factory
+factory.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
