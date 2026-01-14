@@ -99,6 +99,37 @@ func ConfigExists() bool {
 	return err == nil
 }
 
+// setupJiraCLI creates ~/.jira.d/config.yml and ~/.jira.d/.credentials
+func setupJiraCLI(baseURL, email, apiToken string) error {
+	home, _ := os.UserHomeDir()
+	jiraDir := filepath.Join(home, ".jira.d")
+
+	// Create directory
+	if err := os.MkdirAll(jiraDir, 0700); err != nil {
+		return fmt.Errorf("failed to create ~/.jira.d: %w", err)
+	}
+
+	// Create config.yml
+	configContent := fmt.Sprintf(`endpoint: %s
+user: %s
+authentication-method: api-token
+`, baseURL, email)
+
+	configPath := filepath.Join(jiraDir, "config.yml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		return fmt.Errorf("failed to write config.yml: %w", err)
+	}
+
+	// Create .credentials
+	credContent := fmt.Sprintf("%s:%s", email, apiToken)
+	credPath := filepath.Join(jiraDir, ".credentials")
+	if err := os.WriteFile(credPath, []byte(credContent), 0600); err != nil {
+		return fmt.Errorf("failed to write .credentials: %w", err)
+	}
+
+	return nil
+}
+
 // RunConfigure runs interactive configuration
 func RunConfigure() error {
 	reader := bufio.NewReader(os.Stdin)
@@ -111,6 +142,9 @@ func RunConfigure() error {
 
 	// Load existing config if any
 	existing := &Config{
+		Jira: JiraConfig{
+			UseACLI: true,
+		},
 		Repo: RepoConfig{
 			LocalPath:     filepath.Join(GetConfigDir(), "workspace"),
 			DefaultBranch: "main",
@@ -121,28 +155,31 @@ func RunConfigure() error {
 		},
 	}
 	if ConfigExists() {
-		existing, _ = LoadConfig()
+		if loaded, err := LoadConfig(); err == nil {
+			existing = loaded
+		}
 	}
 
 	// Jira Configuration
 	fmt.Println("── JIRA Configuration ──")
 	fmt.Println()
+	fmt.Println("Get your API token from:")
+	fmt.Println("https://id.atlassian.com/manage-profile/security/api-tokens")
+	fmt.Println()
 
-	useACLI := prompt(reader, "Use Jira CLI (acli)? [Y/n]", "y")
+	existing.Jira.BaseURL = prompt(reader, "Jira URL (e.g., https://company.atlassian.net)", existing.Jira.BaseURL)
+	existing.Jira.Email = prompt(reader, "Jira Email", existing.Jira.Email)
+	existing.Jira.APIToken = promptSecret(reader, "Jira API Token", existing.Jira.APIToken)
+
+	useACLI := prompt(reader, "Use Jira CLI for operations? [Y/n]", "y")
 	existing.Jira.UseACLI = strings.ToLower(useACLI) != "n"
-
-	if !existing.Jira.UseACLI {
-		existing.Jira.BaseURL = prompt(reader, "Jira URL (e.g., https://company.atlassian.net)", existing.Jira.BaseURL)
-		existing.Jira.Email = prompt(reader, "Jira Email", existing.Jira.Email)
-		existing.Jira.APIToken = promptSecret(reader, "Jira API Token", existing.Jira.APIToken)
-	} else {
-		fmt.Println("Using Jira CLI - ensure 'jira' command is configured")
-		fmt.Println("  Setup: https://github.com/go-jira/jira")
-	}
 
 	// GitHub Configuration
 	fmt.Println()
 	fmt.Println("── GitHub Configuration ──")
+	fmt.Println()
+	fmt.Println("Create a token with 'repo' scope at:")
+	fmt.Println("https://github.com/settings/tokens")
 	fmt.Println()
 
 	existing.GitHub.Owner = prompt(reader, "GitHub Owner (org or username)", existing.GitHub.Owner)
@@ -153,6 +190,11 @@ func RunConfigure() error {
 	fmt.Println()
 	fmt.Println("── Repository Configuration ──")
 	fmt.Println()
+
+	// Auto-suggest clone URL from GitHub config
+	if existing.Repo.CloneURL == "" && existing.GitHub.Owner != "" && existing.GitHub.Repo != "" {
+		existing.Repo.CloneURL = fmt.Sprintf("https://github.com/%s/%s.git", existing.GitHub.Owner, existing.GitHub.Repo)
+	}
 
 	existing.Repo.CloneURL = prompt(reader, "Repository Clone URL", existing.Repo.CloneURL)
 	existing.Repo.DefaultBranch = prompt(reader, "Default Branch", existing.Repo.DefaultBranch)
@@ -171,24 +213,37 @@ func RunConfigure() error {
 	autoTrans := prompt(reader, "Auto-transition to 'In Progress'? [Y/n]", "y")
 	existing.Poll.AutoTransition = strings.ToLower(autoTrans) != "n"
 
-	// Save
+	// Save factory config
 	if err := SaveConfig(existing); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Setup Jira CLI if using ACLI mode
+	if existing.Jira.UseACLI {
+		fmt.Println()
+		fmt.Println("Setting up Jira CLI...")
+		if err := setupJiraCLI(existing.Jira.BaseURL, existing.Jira.Email, existing.Jira.APIToken); err != nil {
+			fmt.Printf("Warning: %v\n", err)
+			fmt.Println("You may need to install jira CLI: go install github.com/go-jira/jira/cmd/jira@latest")
+		} else {
+			fmt.Println("✓ Jira CLI configured at ~/.jira.d/")
+		}
 	}
 
 	fmt.Printf(`
 ╔════════════════════════════════════════════════════════════════╗
 ║                  CONFIGURATION SAVED                           ║
 ╠════════════════════════════════════════════════════════════════╣
-║  Config: %-50s  ║
 ║                                                                ║
-║  Commands:                                                     ║
+║  Factory config: ~/.factory/config.json                        ║
+║  Jira CLI config: ~/.jira.d/                                   ║
+║                                                                ║
+║  Next steps:                                                   ║
 ║    factory start       Start the daemon                        ║
-║    factory stop        Stop the daemon                         ║
-║    factory status      View status                             ║
-║    factory trigger     Process an issue                        ║
+║    factory trigger X   Process issue X immediately             ║
+║                                                                ║
 ╚════════════════════════════════════════════════════════════════╝
-`, GetConfigPath())
+`)
 
 	return nil
 }
