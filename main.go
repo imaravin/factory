@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/anthropics/factory/internal"
+	"github.com/imaravin/factory/internal"
 )
 
 const version = "1.0.0"

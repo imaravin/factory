@@ -24,7 +24,7 @@ Factory watches your Jira for assigned issues and automatically implements them 
 ## Installation
 
 ```bash
-go install github.com/anthropics/factory@latest
+go install github.com/imaravin/factory@latest
 ```
 
 ### Requirements
