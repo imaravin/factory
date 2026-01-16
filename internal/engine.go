@@ -97,6 +97,17 @@ func fail(result *Result, stage string, err error) *Result {
 	return result
 }
 
+func formatComments(comments []Comment) string {
+	if len(comments) == 0 {
+		return "No comments"
+	}
+	var parts []string
+	for _, c := range comments {
+		parts = append(parts, fmt.Sprintf("**%s** (%s):\n%s", c.Author, c.Date, c.Body))
+	}
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
 func runClaude(repoPath string, issue *Issue) error {
 	prompt := fmt.Sprintf(`Implement the following Jira issue:
 
@@ -110,16 +121,21 @@ func runClaude(repoPath string, issue *Issue) error {
 ## Acceptance Criteria
 %s
 
+## Comments (Additional Context/Instructions)
+%s
+
 ## Instructions
 1. Analyze the codebase
-2. Implement the required changes
-3. Add/update tests if needed
-4. Keep changes minimal and focused
-5. Add TODO comments for ambiguous parts`,
+2. Review the comments above for additional context or specific instructions
+3. Implement the required changes
+4. Add/update tests if needed
+5. Keep changes minimal and focused
+6. Add TODO comments for ambiguous parts`,
 		issue.Key, issue.Title,
 		issue.Type, issue.Priority,
 		issue.Description,
-		issue.AcceptanceCriteria)
+		issue.AcceptanceCriteria,
+		formatComments(issue.Comments))
 
 	cmd := exec.Command("claude",
 		"-p", prompt,

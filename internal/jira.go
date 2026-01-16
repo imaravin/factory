@@ -23,6 +23,13 @@ type Issue struct {
 	Labels             []string
 	Components         []string
 	AcceptanceCriteria string
+	Comments           []Comment
+}
+
+type Comment struct {
+	Author string
+	Body   string
+	Date   string
 }
 
 func (i *Issue) IsValidType() bool {
@@ -95,6 +102,33 @@ func AddCommentACLI(issueKey, comment string) error {
 func TransitionACLI(issueKey, status string) error {
 	_, err := execJira("transition", status, issueKey)
 	return err
+}
+
+func GetCommentsACLI(issueKey string) ([]Comment, error) {
+	// Get comments using jira CLI
+	out, err := execJira("view", issueKey, "-t", `{{range .fields.comment.comments}}{{.author.displayName}}|||{{.body}}|||{{.created}}
+---COMMENT---
+{{end}}`)
+	if err != nil {
+		return nil, err
+	}
+
+	var comments []Comment
+	for _, block := range strings.Split(out, "---COMMENT---") {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		parts := strings.Split(block, "|||")
+		if len(parts) >= 3 {
+			comments = append(comments, Comment{
+				Author: strings.TrimSpace(parts[0]),
+				Body:   strings.TrimSpace(parts[1]),
+				Date:   strings.TrimSpace(parts[2]),
+			})
+		}
+	}
+	return comments, nil
 }
 
 func execJira(args ...string) (string, error) {
@@ -218,6 +252,52 @@ func AddCommentREST(cfg *Config, issueKey, comment string) error {
 	return err
 }
 
+func GetCommentsREST(cfg *Config, issueKey string) ([]Comment, error) {
+	path := fmt.Sprintf("/rest/api/3/issue/%s/comment?orderBy=-created&maxResults=10", issueKey)
+	body, err := jiraRequest(cfg, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var data struct {
+		Comments []struct {
+			Author struct {
+				DisplayName string `json:"displayName"`
+			} `json:"author"`
+			Body struct {
+				Content []struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"content"`
+			} `json:"body"`
+			Created string `json:"created"`
+		} `json:"comments"`
+	}
+
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, err
+	}
+
+	var comments []Comment
+	for _, c := range data.Comments {
+		var bodyText []string
+		for _, block := range c.Body.Content {
+			for _, content := range block.Content {
+				if content.Text != "" {
+					bodyText = append(bodyText, content.Text)
+				}
+			}
+		}
+		comments = append(comments, Comment{
+			Author: c.Author.DisplayName,
+			Body:   strings.Join(bodyText, "\n"),
+			Date:   c.Created,
+		})
+	}
+	return comments, nil
+}
+
 func TransitionREST(cfg *Config, issueKey, status string) error {
 	// Get transitions
 	path := fmt.Sprintf("/rest/api/3/issue/%s/transitions", issueKey)
@@ -284,10 +364,31 @@ func jiraRequest(cfg *Config, method, path string, body interface{}) ([]byte, er
 // --- Unified Interface ---
 
 func GetIssue(cfg *Config, issueKey string) (*Issue, error) {
+	var issue *Issue
+	var err error
+
 	if cfg.Jira.UseACLI {
-		return GetIssueACLI(issueKey)
+		issue, err = GetIssueACLI(issueKey)
+	} else {
+		issue, err = GetIssueREST(cfg, issueKey)
 	}
-	return GetIssueREST(cfg, issueKey)
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch comments
+	comments, _ := GetComments(cfg, issueKey)
+	issue.Comments = comments
+
+	return issue, nil
+}
+
+func GetComments(cfg *Config, issueKey string) ([]Comment, error) {
+	if cfg.Jira.UseACLI {
+		return GetCommentsACLI(issueKey)
+	}
+	return GetCommentsREST(cfg, issueKey)
 }
 
 func GetAssignedIssues(cfg *Config) ([]Issue, error) {
